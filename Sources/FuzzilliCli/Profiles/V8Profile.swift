@@ -91,15 +91,15 @@ fileprivate let WorkerGenerator = RecursiveCodeGenerator("WorkerGenerator") { b 
 }
 
 // Insert random GC calls throughout our code.
-fileprivate let GcGenerator = CodeGenerator("GcGenerator") { b in
-    let gc = b.createNamedVariable(forBuiltin: "gc")
+// fileprivate let GcGenerator = CodeGenerator("GcGenerator") { b in
+//     let gc = b.createNamedVariable(forBuiltin: "gc")
 
-    // `gc()` takes a `type` parameter. If the value is 'async', gc() returns a
-    // Promise. We currently do not really handle this other than typing the
-    // return of gc to .undefined | .jsPromise. One could either chain a .then
-    // or create two wrapper functions that are differently typed such that
-    // fuzzilli always knows what the type of the return value is.
-    b.callFunction(gc, withArgs: b.findOrGenerateArguments(forSignature: b.fuzzer.environment.type(ofBuiltin: "gc").signature!)) }
+//     // `gc()` takes a `type` parameter. If the value is 'async', gc() returns a
+//     // Promise. We currently do not really handle this other than typing the
+//     // return of gc to .undefined | .jsPromise. One could either chain a .then
+//     // or create two wrapper functions that are differently typed such that
+//     // fuzzilli always knows what the type of the return value is.
+//     b.callFunction(gc, withArgs: b.findOrGenerateArguments(forSignature: b.fuzzer.environment.type(ofBuiltin: "gc").signature!)) }
 
 fileprivate let WasmStructGenerator = CodeGenerator("WasmStructGenerator") { b in
     b.eval("%WasmStruct()", hasOutput: true);
@@ -519,7 +519,7 @@ fileprivate let FastApiCallFuzzer = ProgramTemplate("FastApiCallFuzzer") { b in
 let v8Profile = Profile(
     processArgs: { randomize in
         var args = [
-            "--expose-gc",
+            // "--expose-gc",
             "--expose-externalize-string",
             "--omit-quit",
             "--allow-natives-syntax",
@@ -684,12 +684,108 @@ let v8Profile = Profile(
 
     maxExecsBeforeRespawn: 1000,
 
-    timeout: 250,
+    timeout: 600,
 
     codePrefix: """
+const builtins = [
+  URIError, Math, Reflect, Uint8ClampedArray, isNaN, TypeError, Number, eval, NaN, Int8Array, AggregateError, 
+  Int16Array, Symbol, Set, Object, EvalError, RangeError, String, Uint32Array, RegExp, isFinite, Promise, 
+  DataView, Float64Array, WeakMap, BigInt, parseFloat, WeakSet, Uint16Array, Map, Array, Int32Array, ReferenceError, 
+  Boolean, SyntaxError, Function, Error, Proxy, parseInt, ArrayBuffer, Infinity, Uint8Array, JSON, Float32Array];
+  
+function guard() {
+  Math.random = () => 1;
+
+  const OriginalDate = Date;
+  const fixedTime = new OriginalDate('2025-01-01T00:00:00Z').getTime();
+  Date.now = () => fixedTime;
+  globalThis.Date = new Proxy(Date, {
+    construct(target, args) { return new target(fixedTime); },
+    apply(target, thisArg, args) { return fixedTime; }
+  });
+  Date.prototype.constructor = function Date(...args) {
+    if (!(this instanceof Date)) { return new OriginalDate(fixedTime).toString(); }
+    return new OriginalDate(fixedTime);
+  };
+
+  for (let k in builtins) {
+    Object.freeze(builtins[k]);
+    Object.freeze(builtins[k].prototype);
+  }
+}
+
+function classOf(object) {
+  var string = Object.prototype.toString.call(object);
+  return string.substring(8, string.length - 1);
+}
+
+function deepObjectEquals(a, b) {
+  var aProps = Object.keys(a);
+  aProps.sort();
+  var bProps = Object.keys(b);
+  bProps.sort();
+  if (!deepEquals(aProps, bProps)) {
+    return false;
+  }
+  for (var i = 0; i < aProps.length; i++) {
+    if (!deepEquals(a[aProps[i]], b[aProps[i]])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function deepEquals(a, b) {
+  if (a === undefined && b === undefined) return false;
+  if (a === b) {
+    if (a === 0) return (1 / a) === (1 / b);
+    return true;
+  }
+  if (typeof a != typeof b) return false;
+  if (typeof a == 'number') return (isNaN(a) && isNaN(b)) || (a===b);
+  if (typeof a !== 'object' && typeof a !== 'function' && typeof a !== 'symbol') return false;
+  var objectClass = classOf(a);
+  if (objectClass === 'Array') {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (!deepEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }                
+  if (objectClass !== classOf(b)) return false;
+  if (objectClass === 'RegExp') {
+    return (a.toString() === b.toString());
+  }
+  if (objectClass === 'Function') return true;
+ 
+  if (objectClass == 'String' || objectClass == 'Number' ||
+      objectClass == 'Boolean' || objectClass == 'Date') {
+    if (a.valueOf() !== b.valueOf()) return false;
+  }
+  return deepObjectEquals(a, b);
+}
+
+function opt(opt_param){
+  "use strict";
                 """,
 
     codeSuffix: """
+}
+
+guard();
+let jit_0 = opt(true);
+let jit_1 = opt(true);
+if (deepEquals(jit_0, jit_1)) {
+  %PrepareFunctionForOptimization(opt);
+  opt(false);
+  %OptimizeFunctionOnNextCall(opt);
+  let jit_2 = opt(true);
+  if (!deepEquals(jit_0, jit_2)) {
+    fuzzilli('FUZZILLI_CRASH', 0);
+  }
+}
                 """,
 
     ecmaVersion: ECMAScriptVersion.es6,
@@ -714,24 +810,24 @@ let v8Profile = Profile(
     ],
 
     additionalCodeGenerators: [
-        (ForceJITCompilationThroughLoopGenerator,  5),
-        (ForceTurboFanCompilationGenerator,        5),
-        (ForceMaglevCompilationGenerator,          5),
-        (TurbofanVerifyTypeGenerator,             10),
+        // (ForceJITCompilationThroughLoopGenerator,  5),
+        // (ForceTurboFanCompilationGenerator,        5),
+        // (ForceMaglevCompilationGenerator,          5),
+        // (TurbofanVerifyTypeGenerator,             10),
 
-        (WorkerGenerator,                         10),
-        (GcGenerator,                             10),
+        // (WorkerGenerator,                         10),
+        // (GcGenerator,                             10),
 
-        (WasmStructGenerator,                     15),
-        (WasmArrayGenerator,                      15),
+        // (WasmStructGenerator,                     15),
+        // (WasmArrayGenerator,                      15),
     ],
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([
-        (MapTransitionFuzzer,    1),
-        (ValueSerializerFuzzer,  1),
-        (RegExpFuzzer,           1),
-        (WasmFastCallFuzzer,     1),
-        (FastApiCallFuzzer,      1),
+        // (MapTransitionFuzzer,    1),
+        // (ValueSerializerFuzzer,  1),
+        // (RegExpFuzzer,           1),
+        // (WasmFastCallFuzzer,     1),
+        // (FastApiCallFuzzer,      1),
     ]),
 
     disabledCodeGenerators: [],
@@ -739,12 +835,13 @@ let v8Profile = Profile(
     disabledMutators: [],
 
     additionalBuiltins: [
-        "gc"                                            : .function([.opt(gcOptions.instanceType)] => (.undefined | .jsPromise)),
-        "d8"                                            : .jsD8,
-        "Worker"                                        : .constructor([.anything, .object()] => .object(withMethods: ["postMessage","getMessage"])),
+        // "gc"                                            : .function([.opt(gcOptions.instanceType)] => (.undefined | .jsPromise)),
+        // "d8"                                            : .jsD8,
+        // "Worker"                                        : .constructor([.anything, .object()] => .object(withMethods: ["postMessage","getMessage"])),
     ],
 
-    additionalObjectGroups: [jsD8, jsD8Test, jsD8FastCAPI, gcOptions],
+    // additionalObjectGroups: [jsD8, jsD8Test, jsD8FastCAPI, gcOptions],
+    additionalObjectGroups: [],
 
     optionalPostProcessor: nil
 )

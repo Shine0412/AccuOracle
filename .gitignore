@@ -1,0 +1,15 @@
+Package.resolved
+.DS_Store
+/.build
+/Packages
+/*.xcodeproj
+.vscode
+.*.sw?
+.swiftpm
+
+# custom GCE configuration
+Cloud/GCE/config.sh
+
+# node.js dependencies, used by the JavaScript parser for the FuzzIL compiler
+node_modules
+package-lock.json
